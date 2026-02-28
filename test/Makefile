@@ -35,7 +35,7 @@ BROKEN		= \
   HigherOrder6.fst ForwardDecl.fst BlitNull.fst \
   Ctypes1.fst Ctypes2.fst Ctypes3.fst Ctypes4.fst \
   AbstractStructAbstract.fst MonomorphizationSeparate1.fst \
-  Layered.fst GlobalInit2.fst $(wildcard Rust*.fst)
+  Layered.fst GlobalInit2.fst $(wildcard Rust*.fst) $(wildcard JS*.fst)
 
 # Lowlevel is not really broken, but its test shouldn't be run since it's a
 # special file and doesn't have a main.
@@ -67,6 +67,7 @@ WASM_FILES	= \
   Wasm4.wasm-test Wasm5.wasm-test Wasm6.wasm-test Wasm7.wasm-test \
   Wasm8.wasm-test Wasm9.wasm-test Wasm10.wasm-test \
   $(CRYPTO_WASM_FILES)
+JS_FILES	= JS1.js-test JS2.js-test JS3.js-test
 NEGATIVE	= false
 
 WEB_DIR		?= web
@@ -85,7 +86,7 @@ FSTAR		= $(FSTAR_EXE) \
   --trivial_pre_for_unannotated_effectful_fns false \
   --cmi --warn_error -274
 
-all: $(FILES) rust $(WASM_FILES) $(CUSTOM) ctypes-test sepcomp-test rust-val-test bundle-test rust-propererasure-bundle-test
+all: $(FILES) rust $(WASM_FILES) $(JS_FILES) $(CUSTOM) ctypes-test sepcomp-test rust-val-test bundle-test rust-propererasure-bundle-test
 
 # Needs node
 wasm: $(WASM_FILES)
@@ -335,6 +336,24 @@ $(OUTPUT_DIR)/%.wasm: $(ALL_KRML_FILES) $(KRML_BIN)
 %/Crypto.Symmetric.Chacha20.wasm: JSFILES=./main-Chacha.js
 %/Crypto.Symmetric.Chacha20.wasm: EXTRA+=$(CRYPTO_OPTS) -drop FStar
 WasmTrap.wasm-test: NEGATIVE = true
+
+######
+# JS #
+######
+
+js: $(JS_FILES)
+
+.PRECIOUS: $(OUTPUT_DIR)/%.js-out
+$(OUTPUT_DIR)/%.js-out: $(ALL_KRML_FILES) $(KRML_BIN)
+	$(call run-with-log,$(KRML) -minimal -bundle 'FStar.*' -bundle 'LowStar.*' -bundle Prims \
+	  -bundle C -bundle C.Endianness -bundle C.Nullity -bundle C.String \
+	  -backend js $(EXTRA) -tmpdir $@ -no-prefix $* $(filter %.krml,$^)\
+	  ,[KRML-JS] $*,$(OUTPUT_DIR)/$*)
+	cp main-$(notdir $*).js $@/main.mjs
+	echo '{"type":"module"}' > $@/package.json
+
+%.js-test: $(OUTPUT_DIR)/%.js-out
+	cd $^ && node main.mjs && echo "\033[01;32m✔\033[00m [JS-TEST,$*]" || (echo "\033[01;31m✘\033[00m [JS-TEST,$*]" && false)
 
 ########
 # Rust #

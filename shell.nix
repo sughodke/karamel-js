@@ -17,5 +17,12 @@ pkgs.mkShell {
     pkgs.ocamlPackages.wasm
     pkgs.ocamlPackages.visitors
     pkgs.ocamlPackages.uucp
+    pkgs.fstar
+    pkgs.z3
+    pkgs.nodejs
+    pkgs.git
+    pkgs.time
+    pkgs.coreutils
+    (pkgs.writeShellScriptBin "gtime" ''exec ${pkgs.time}/bin/time "$@"'')
   ];
 }

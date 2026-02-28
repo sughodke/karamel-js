@@ -2,3 +2,4 @@
 .depend
 .output
 *.exe
+.js-out/
