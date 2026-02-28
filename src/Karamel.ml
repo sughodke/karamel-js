@@ -234,8 +234,9 @@ Supported options:|}
       | "wasm" -> backend := Wasm
       | "c" -> backend := C
       | "rust" -> backend := Rust; allow_tapps := true; PrintCommon.indent := 4
+      | "js" -> backend := JS
       | _ -> failwith ("unrecognized backend: " ^ s)
-    ), "  generate code for either one of c (default), rust or wasm";
+    ), "  generate code for either one of c (default), rust, wasm or js";
     "", Arg.Unit (fun _ -> ()), " ";
 
     (* Controlling the behavior of KaRaMeL *)
@@ -773,6 +774,19 @@ Supported options:|}
     let files = OptimizeMiniRust.infer_mut_borrows files in
     let files = OptimizeMiniRust.simplify_minirust files in
     OutputRust.write_all files
+
+  else if Options.js () then
+    let js_cstar_files = AstToCStar.mk_files files c_name_map ifdefs macros in
+    let js_cstar_files = List.filter (fun (_, decls) -> List.length decls > 0) js_cstar_files in
+    tick_print true "AstToCStar";
+
+    let js_out_files = CStarToJS.mk_files c_name_map js_cstar_files in
+    OutputJavaScript.write_all js_out_files;
+    tick_print true "CStarToJS";
+
+    if not !Options.silent then
+      Printf.printf "KaRaMeL: wrote out .js files for %s\n"
+        (String.concat ", " (List.map fst js_out_files))
 
   else
     let () = () in

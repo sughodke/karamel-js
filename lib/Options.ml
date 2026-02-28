@@ -68,10 +68,11 @@ let debug_modules: string list ref = ref []
 let debug s = List.exists ((=) s) !debug_modules
 let backtrace : bool ref = ref false
 
-type backend = C | Rust | Wasm
+type backend = C | Rust | Wasm | JS
 let backend = ref C
 let wasm () = !backend = Wasm
 let rust () = !backend = Rust
+let js () = !backend = JS
 let no_box = ref false
 let contained: string list ref = ref []
 let keep_tuples = ref false
