@@ -1,43 +1,130 @@
-KaRaMeL
--------
+karamel-js
+----------
 
-| Linux  |
-|---------|
-[![CI](https://github.com/FStarLang/karamel/actions/workflows/ci.yml/badge.svg)](https://github.com/FStarLang/karamel/actions/workflows/ci.yml)
+A JavaScript backend for [KaRaMeL](https://github.com/FStarLang/karamel) — compiles formally verified [Low\*](https://fstarlang.github.io/lowstar/html/) programs to clean, readable ES module JavaScript with zero runtime dependencies.
 
-KaRaMeL (formerly known as KReMLin) is a tool that extracts an F\* program to
-readable C code: K&R meets ML!
+```
+F* (Low*) --> .krml --> KaRaMeL --> JavaScript ES modules
+```
 
-If the F\* program verifies against a low-level memory model that talks about
-the stack and the heap; if it is first-order; if it obeys certain restrictions
-(e.g. non-recursive data types) then KaRaMeL will turn it into C.
+## Background
 
-The best way to learn about KaRaMeL is its work-in-progress
-[tutorial](https://fstarlang.github.io/lowstar/html/). Pull requests and
-feedback are welcome!
+[KaRaMeL](https://github.com/FStarLang/karamel) (K&R meets ML) extracts F\* programs to readable C. It takes Low\*, a subset of F\* that verifies against a low-level memory model (stack, heap, first-order, non-recursive data types), and compiles it through several IR passes:
 
-- [DESIGN.md](DESIGN.md) has a technical overview of the different
-  transformation passes performed by KaRaMeL, and is slightly out of date.
+```
+.krml --> Ast --> CStar --> C11 --> .c/.h
+```
 
-This work has been formalized on paper. We state that the compilation of
-such F\* programs to C preserves semantics. We start from Low\*, a subset of
-F\*, and relate its semantics to [CompCert](http://compcert.inria.fr/)'s Clight.
-- the [ICFP 2017 Paper] provides an overview of KaRaMeL as well
-  as a paper formalization of our compilation toolchain
+[CStar](https://github.com/FStarLang/karamel/blob/master/lib/CStar.ml) is KaRaMeL's key intermediate representation — after monomorphization, inlining, struct lowering, and pattern match compilation, it provides a C-like AST that is straightforward to print.
 
-We have written 120,000 lines of Low\* code, implementing the [TLS
-1.3](https://tlswg.github.io/tls13-spec/) record layer. As such, KaRaMeL is a
-key component of [Project Everest](https://project-everest.github.io/).
-- [HACL\*], our High Assurance Crypto Library, provides numerous cryptographic
-  primitives written in F\*; these primitives enjoy memory safety, functional
-  correctness, and some degree of side-channel resistance -- they extract to C
-  via KaRaMeL.
+karamel-js adds a direct CStar-to-JavaScript code generator, branching off after CStar and bypassing C11 entirely:
 
-[ML Workshop Paper]: https://jonathan.protzenko.fr/papers/ml16.pdf
-[HACL\*]: https://github.com/hacl-star/hacl-star
-[ICFP 2017 Paper]: https://arxiv.org/abs/1703.00053
+```
+.krml --> Ast --> CStar --+--> C11  --> .c/.h    (original KaRaMeL)
+                         |
+                         +--> CStarToJS --> .js  (karamel-js)
+```
 
-## Trying out KaRaMeL
+## What We Added
+
+### New Files
+
+| File | Purpose |
+|---|---|
+| [`lib/CStarToJS.ml`](lib/CStarToJS.ml) | CStar to JavaScript pretty-printer (~500 lines). Handles expressions, statements, declarations, operator precedence, typed array selection, and ES module import generation. |
+| [`lib/OutputJavaScript.ml`](lib/OutputJavaScript.ml) | File writer. Writes `.js` files to the output directory via PPrint. |
+
+### Modified Files
+
+| File | Change |
+|---|---|
+| [`lib/Options.ml`](lib/Options.ml) | Added `JS` to the `backend` type and `js ()` helper. |
+| [`src/Karamel.ml`](src/Karamel.ml) | Added `-backend js` CLI option and JS pipeline branch. |
+
+### CStar to JavaScript Mapping
+
+| CStar | JavaScript |
+|---|---|
+| `LowStar.Buffer` (fixed-width integers) | Typed arrays (`Uint32Array`, `Uint8Array`, ...) |
+| Struct field access | Object property access |
+| Buffer read/write (`buf[i]`) | Array index (`arr[i]`) |
+| `BufCreate`, `BufBlit`, `BufFill` | `new TypedArray(n)`, `.set()`, `.fill()` |
+| `BufFree` | Skipped (GC handles it) |
+| Top-level functions | `export function` |
+| Top-level constants | `export let` |
+| Cross-module calls | ES module `import { ... } from './Module.js'` |
+| Integer casts | Bitwise coercion (`\| 0` for i32, `>>> 0` for u32) |
+
+## Usage
+
+```bash
+krml -backend js -tmpdir out/js \
+  -skip-compilation -skip-linking \
+  -bundle 'FStar.*' -bundle 'LowStar.*' -bundle 'C.*' -bundle 'Prims' \
+  out.krml
+```
+
+Produces one `.js` ES module per F\* module, with automatic import generation for cross-module references.
+
+## Output Size
+
+Tested with 5 verified CRDT modules (G-Counter, Grow-Only Set, LWW-Register, Two-Phase Set, PN-Counter) — identical verified Low\* source for the first two rows, equivalent Dafny source for the third:
+
+| Approach | Raw | Gzipped | Runtime Deps |
+|---|---|---|---|
+| **karamel-js** | **3.3 KB** | **893 B** | **none** |
+| Dafny `translate js` | 11.3 KB | 1.5 KB | +120 KB (`bignumber.js`) |
+| Low\* via Emscripten (WASM) | 21.7 KB | 7.9 KB | loader included |
+
+3.4x smaller than Dafny, 6.5x smaller than WASM — with zero runtime dependencies.
+
+## Example
+
+Given a verified Low\* G-Counter:
+
+```javascript
+// Generated by KaRaMeL — F* module: GCounter
+
+export let GCounter_max_nodes = 16;
+
+export function GCounter_get_count(c, node) { return c[node]; }
+
+export function GCounter_increment(c, node) {
+  let v = c[node];
+  c[node] = v + 1;
+}
+
+export function GCounter_merge(dst, src) { GCounter_merge_loop(dst, src, 0); }
+
+function GCounter_merge_loop(dst, src, i) {
+  if (i < 16) {
+    let d = dst[i];
+    let s = src[i];
+    let ite = undefined;
+    if (d >= s) { ite = d; } else { ite = s; }
+    dst[i] = ite;
+    GCounter_merge_loop(dst, src, i + 1);
+  }
+}
+```
+
+Callers allocate typed arrays directly:
+
+```javascript
+const counter = new Uint32Array(16);
+GCounter_increment(counter, 0);
+GCounter_increment(counter, 0);
+console.log(GCounter_get_count(counter, 0)); // 2
+```
+
+## Goals
+
+- Optimized, minimal JS output from formally verified Low\* code
+- Zero runtime dependencies — only built-in JS primitives
+- ES module output with tree-shaking friendly exports
+- Readable output that maps clearly back to the verified source
+
+## Building
 
 KaRaMeL requires OCaml (>= 4.10.0), OPAM, and a recent version of GNU make.
 
@@ -58,24 +145,10 @@ To build just run `make` from this directory.
 **Note:** on OSX, KaRaMeL is happier if you have `greadlink` installed (`brew
 install coreutils`).
 
-If you have the right version of F\* and `fstar.exe` is in your `PATH` then you
-can run the KaRaMeL test suite by doing `make test`.
+### Building with Nix
 
-## Installing through OPAM
-
-KaRaMeL is also available on OPAM, by running `opam install karamel`.
-
-If you installed the latest version of F\* through OPAM, using `opam pin add fstar --dev-repo`,
-you can also install the most up-to-date version of KaRaMeL by running `opam pin add karamel --dev-repo`.
-
-File a bug if things don't work!
-
-## Documentation
-
-The `--help` flag contains a substantial amount of information.
-
-```
-$ ./krml --help
+```bash
+nix-shell shell.nix --run "dune build"
 ```
 
 ## License
